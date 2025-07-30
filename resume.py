@@ -9,7 +9,7 @@ import io
 client_openai = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 client_claude = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
-# === GPT Bullet Point Generator ===
+# === GPT-4 Bullet Point Generator ===
 def generate_bullet_points(subject, description, github_url):
     prompt = f"""You are a resume expert. Based on the project below, generate 2–3 strong, concise resume bullet points:
 
@@ -29,36 +29,38 @@ Format:
     )
     return response.choices[0].message.content.strip()
 
-# === Replace First Project Safely ===
+# === Replace First Project (Surgically and Neatly) ===
 def replace_first_project_safely(doc, new_title, new_bullets, new_date="Jan 2024 – May 2024"):
-    bullet_points = new_bullets.strip().split("•")
-    bullet_points = [bp.strip() for bp in bullet_points if bp.strip()]
+    bullet_points = [bp.strip() for bp in new_bullets.strip().split("•") if bp.strip()]
     section_found = False
     replaced = False
+    i = 0
 
-    for i, para in enumerate(doc.paragraphs):
+    while i < len(doc.paragraphs):
+        para = doc.paragraphs[i]
+
         if "PROJECT EXPERIENCE" in para.text.strip().upper():
             section_found = True
+            i += 1
             continue
 
+        # Find the first project under Project Experience
         if section_found and para.text.strip().isupper() and not replaced:
-            # Replace the project title
+            # Replace the title
             para.text = f"{new_title}        {new_date}"
             para.style = 'Normal'
             if para.runs:
                 para.runs[0].font.bold = True
                 para.runs[0].font.size = Pt(11)
 
-            # Clear old bullet points
+            # Delete old bullets until next all-caps heading
             j = i + 1
             while j < len(doc.paragraphs):
-                next_para = doc.paragraphs[j]
-                if next_para.text.strip().isupper():  # Reached next project
+                if doc.paragraphs[j].text.strip().isupper():
                     break
-                doc.paragraphs[j].clear()
-                j += 1
+                del doc.paragraphs[j]
 
-            # Insert bullets
+            # Insert new bullets at correct index
             insert_index = i + 1
             for bullet in bullet_points:
                 new_para = doc.add_paragraph()
@@ -71,14 +73,16 @@ def replace_first_project_safely(doc, new_title, new_bullets, new_date="Jan 2024
             replaced = True
             break
 
+        i += 1
+
     return doc
 
-# === Extract Resume Text ===
+# === Resume Text Extractor for Claude Feedback ===
 def extract_text_from_docx(docx_file):
     doc = Document(docx_file)
     return "\n".join([p.text for p in doc.paragraphs if p.text.strip() != ""])
 
-# === Claude Feedback ===
+# === Claude Feedback Agent ===
 def get_resume_feedback_from_claude(resume_text):
     system_prompt = "You're a career coach reviewing resumes for clarity, impact, and relevance."
     user_prompt = f"""Evaluate the following resume:
@@ -100,27 +104,27 @@ Return your response in a clear bullet list.
     )
     return response.content[0].text
 
-# === STREAMLIT UI ===
+# === STREAMLIT APP UI ===
 st.set_page_config(page_title="Agentic Resume Assistant", layout="centered")
 st.title("🤖 Agentic AI Resume Assistant")
-st.markdown("Upload your resume, add a project, and get GPT & Claude feedback!")
+st.markdown("Upload your resume, replace 1 project, and get GPT & Claude feedback!")
 
 uploaded_file = st.file_uploader("📄 Upload your `.docx` resume", type=["docx"])
 
 if uploaded_file:
     st.success("✅ Resume uploaded successfully!")
 
-    st.subheader("🛠️ Add New Project")
-    subject = st.text_input("Subject Name", placeholder="e.g., Business Analytics Toolbox")
+    st.subheader("🛠️ Replace First Project")
+    subject = st.text_input("Project Title", placeholder="e.g., Business Analytics Toolbox")
     description = st.text_area("Project Description", height=150)
     github_url = st.text_input("GitHub Repository URL (optional)")
     date_range = st.text_input("Project Date Range", value="Jan 2024 – May 2024")
 
-    if st.button("✨ Generate Resume & Feedback"):
+    if st.button("✨ Update Resume & Get Feedback"):
         with st.spinner("Generating bullet points using GPT-4..."):
             bullet_points = generate_bullet_points(subject, description, github_url)
 
-        with st.spinner("Updating resume with new project..."):
+        with st.spinner("Replacing the first project in your resume..."):
             doc = Document(uploaded_file)
             updated_doc = replace_first_project_safely(doc, subject.upper(), bullet_points, date_range)
             buffer = io.BytesIO()
@@ -132,7 +136,7 @@ if uploaded_file:
             feedback = get_resume_feedback_from_claude(resume_text)
 
         st.subheader("✅ Updated Resume Preview")
-        st.text_area("Text Preview", resume_text, height=300)
+        st.text_area("Resume Text", resume_text, height=300)
 
         st.download_button(
             label="📥 Download Updated Resume",
