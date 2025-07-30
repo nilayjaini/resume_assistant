@@ -9,7 +9,7 @@ import io
 client_openai = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 client_claude = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
-# === Bullet Point Generator (GPT-4) ===
+# === GPT Bullet Point Generator ===
 def generate_bullet_points(subject, description, github_url):
     prompt = f"""You are a resume expert. Based on the project below, generate 2–3 strong, concise resume bullet points:
 
@@ -29,7 +29,7 @@ Format:
     )
     return response.choices[0].message.content.strip()
 
-# === Replace First Project in PROJECT EXPERIENCE Section ===
+# === Replace First Project Safely ===
 def replace_first_project_safely(doc, new_title, new_bullets, new_date="Jan 2024 – May 2024"):
     bullet_points = new_bullets.strip().split("•")
     bullet_points = [bp.strip() for bp in bullet_points if bp.strip()]
@@ -41,31 +41,31 @@ def replace_first_project_safely(doc, new_title, new_bullets, new_date="Jan 2024
             section_found = True
             continue
 
-        # First bold all-caps title under PROJECT EXPERIENCE = target project
         if section_found and para.text.strip().isupper() and not replaced:
-            # Replace title with new title + date
+            # Replace the project title
             para.text = f"{new_title}        {new_date}"
             para.style = 'Normal'
             if para.runs:
                 para.runs[0].font.bold = True
                 para.runs[0].font.size = Pt(11)
 
-            # Remove existing bullet lines
+            # Clear old bullet points
             j = i + 1
             while j < len(doc.paragraphs):
                 next_para = doc.paragraphs[j]
-                if next_para.text.strip().isupper():  # next project reached
+                if next_para.text.strip().isupper():  # Reached next project
                     break
                 doc.paragraphs[j].clear()
                 j += 1
 
-            # Insert new bullets at proper location
+            # Insert bullets
             insert_index = i + 1
             for bullet in bullet_points:
-                p = doc.paragraphs.insert(insert_index, doc.add_paragraph())
-                run = p.add_run(f"• {bullet}")
+                new_para = doc.add_paragraph()
+                run = new_para.add_run(f"• {bullet}")
                 run.font.size = Pt(10.5)
-                p.paragraph_format.left_indent = Inches(0.25)
+                new_para.paragraph_format.left_indent = Inches(0.25)
+                doc.paragraphs.insert(insert_index, new_para)
                 insert_index += 1
 
             replaced = True
@@ -78,7 +78,7 @@ def extract_text_from_docx(docx_file):
     doc = Document(docx_file)
     return "\n".join([p.text for p in doc.paragraphs if p.text.strip() != ""])
 
-# === Feedback via Claude ===
+# === Claude Feedback ===
 def get_resume_feedback_from_claude(resume_text):
     system_prompt = "You're a career coach reviewing resumes for clarity, impact, and relevance."
     user_prompt = f"""Evaluate the following resume:
