@@ -3,12 +3,11 @@ from docx import Document
 from docx.shared import Pt, Inches
 from openai import OpenAI
 import anthropic
-import os
 import io
 
-# === API Clients ===
-client_openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-client_claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# === API Clients from Streamlit Secrets ===
+client_openai = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+client_claude = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
 # === GPT Bullet Point Generator ===
 def generate_bullet_points(subject, description, github_url):
@@ -30,7 +29,7 @@ Format:
     )
     return response.choices[0].message.content.strip()
 
-# === Replace First Project in Resume ===
+# === Replace First Project in Resume (Safe Style) ===
 def replace_first_project_safely(doc, new_title, new_bullets):
     bullet_points = new_bullets.strip().split("•")
     bullet_points = [bp.strip() for bp in bullet_points if bp.strip()]
@@ -42,13 +41,15 @@ def replace_first_project_safely(doc, new_title, new_bullets):
             para.style.font.size = Pt(11)
             para.style.font.bold = True
 
+            # Remove old bullets
             j = i + 1
             while j < len(doc.paragraphs) and doc.paragraphs[j].text.strip().startswith("•"):
                 doc.paragraphs[j].clear()
                 j += 1
 
+            # Add new bullets manually
             for bullet in bullet_points:
-                bullet_para = doc.add_paragraph(style='List Bullet')
+                bullet_para = doc.add_paragraph()
                 run = bullet_para.add_run(f"• {bullet}")
                 run.font.size = Pt(10.5)
                 bullet_para.paragraph_format.left_indent = Inches(0.25)
