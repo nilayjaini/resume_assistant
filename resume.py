@@ -9,7 +9,7 @@ import io
 client_openai = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 client_claude = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
-# === GPT-4 Bullet Point Generator ===
+# === GPT Bullet Point Generator ===
 def generate_bullet_points(subject, description, github_url):
     prompt = f"""You are a resume expert. Based on the project below, generate 2–3 strong, concise resume bullet points:
 
@@ -29,60 +29,59 @@ Format:
     )
     return response.choices[0].message.content.strip()
 
-# === Replace First Project (Surgically and Neatly) ===
+# === Replace First Project (Colab-style Formatting) ===
 def replace_first_project_safely(doc, new_title, new_bullets, new_date="Jan 2024 – May 2024"):
     bullet_points = [bp.strip() for bp in new_bullets.strip().split("•") if bp.strip()]
     section_found = False
     replaced = False
-    i = 0
 
-    while i < len(doc.paragraphs):
-        para = doc.paragraphs[i]
-
+    for i, para in enumerate(doc.paragraphs):
         if "PROJECT EXPERIENCE" in para.text.strip().upper():
             section_found = True
-            i += 1
             continue
 
-        # Find the first project under Project Experience
         if section_found and para.text.strip().isupper() and not replaced:
-            # Replace the title
-            para.text = f"{new_title}        {new_date}"
-            para.style = 'Normal'
-            if para.runs:
-                para.runs[0].font.bold = True
-                para.runs[0].font.size = Pt(11)
-
-            # Delete old bullets until next all-caps heading
-            j = i + 1
-            while j < len(doc.paragraphs):
-                if doc.paragraphs[j].text.strip().isupper():
+            # Find the range of the first project (title + bullets)
+            start = i
+            end = i + 1
+            while end < len(doc.paragraphs):
+                if doc.paragraphs[end].text.strip().isupper():
                     break
-                del doc.paragraphs[j]
+                end += 1
 
-            # Insert new bullets at correct index
-            insert_index = i + 1
+            # Clear old project block
+            for j in range(start, end):
+                doc.paragraphs[j].clear()
+
+            # Insert new project title + date
+            title_line = doc.paragraphs[start]
+            title_line.text = f"{new_title}        {new_date}"
+            run = title_line.runs[0]
+            run.font.bold = True
+            run.font.size = Pt(11)
+            title_line.paragraph_format.left_indent = Inches(0)
+
+            # Insert bullet points
+            insert_index = start + 1
             for bullet in bullet_points:
-                new_para = doc.add_paragraph()
-                run = new_para.add_run(f"• {bullet}")
+                p = doc.add_paragraph()
+                run = p.add_run(f"• {bullet}")
                 run.font.size = Pt(10.5)
-                new_para.paragraph_format.left_indent = Inches(0.25)
-                doc.paragraphs.insert(insert_index, new_para)
+                p.paragraph_format.left_indent = Inches(0.25)
+                doc.paragraphs.insert(insert_index, p)
                 insert_index += 1
 
             replaced = True
             break
 
-        i += 1
-
     return doc
 
-# === Resume Text Extractor for Claude Feedback ===
+# === Extract Resume Text for Claude ===
 def extract_text_from_docx(docx_file):
     doc = Document(docx_file)
     return "\n".join([p.text for p in doc.paragraphs if p.text.strip() != ""])
 
-# === Claude Feedback Agent ===
+# === Claude Resume Feedback ===
 def get_resume_feedback_from_claude(resume_text):
     system_prompt = "You're a career coach reviewing resumes for clarity, impact, and relevance."
     user_prompt = f"""Evaluate the following resume:
@@ -104,10 +103,10 @@ Return your response in a clear bullet list.
     )
     return response.content[0].text
 
-# === STREAMLIT APP UI ===
+# === STREAMLIT APP ===
 st.set_page_config(page_title="Agentic Resume Assistant", layout="centered")
 st.title("🤖 Agentic AI Resume Assistant")
-st.markdown("Upload your resume, replace 1 project, and get GPT & Claude feedback!")
+st.markdown("Upload your resume, replace the first project, and get GPT & Claude feedback.")
 
 uploaded_file = st.file_uploader("📄 Upload your `.docx` resume", type=["docx"])
 
