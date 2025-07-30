@@ -5,11 +5,11 @@ from openai import OpenAI
 import anthropic
 import io
 
-# === API Clients from Streamlit Secrets ===
+# === API Clients ===
 client_openai = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 client_claude = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
-# === GPT Bullet Point Generator ===
+# === Bullet Point Generator (GPT-4) ===
 def generate_bullet_points(subject, description, github_url):
     prompt = f"""You are a resume expert. Based on the project below, generate 2–3 strong, concise resume bullet points:
 
@@ -29,37 +29,56 @@ Format:
     )
     return response.choices[0].message.content.strip()
 
-# === Replace First Project in Resume (Safe Style) ===
-def replace_first_project_safely(doc, new_title, new_bullets):
+# === Replace First Project in PROJECT EXPERIENCE Section ===
+def replace_first_project_safely(doc, new_title, new_bullets, new_date="Jan 2024 – May 2024"):
     bullet_points = new_bullets.strip().split("•")
     bullet_points = [bp.strip() for bp in bullet_points if bp.strip()]
+    section_found = False
     replaced = False
 
     for i, para in enumerate(doc.paragraphs):
-        if para.text.strip().isupper() and not replaced:
-            para.text = new_title
-            para.style.font.size = Pt(11)
-            para.style.font.bold = True
+        if "PROJECT EXPERIENCE" in para.text.strip().upper():
+            section_found = True
+            continue
 
-            # Remove old bullets
+        # First bold all-caps title under PROJECT EXPERIENCE = target project
+        if section_found and para.text.strip().isupper() and not replaced:
+            # Replace title with new title + date
+            para.text = f"{new_title}        {new_date}"
+            para.style = 'Normal'
+            if para.runs:
+                para.runs[0].font.bold = True
+                para.runs[0].font.size = Pt(11)
+
+            # Remove existing bullet lines
             j = i + 1
-            while j < len(doc.paragraphs) and doc.paragraphs[j].text.strip().startswith("•"):
+            while j < len(doc.paragraphs):
+                next_para = doc.paragraphs[j]
+                if next_para.text.strip().isupper():  # next project reached
+                    break
                 doc.paragraphs[j].clear()
                 j += 1
 
-            # Add new bullets manually
+            # Insert new bullets at proper location
+            insert_index = i + 1
             for bullet in bullet_points:
-                bullet_para = doc.add_paragraph()
-                run = bullet_para.add_run(f"• {bullet}")
+                p = doc.paragraphs.insert(insert_index, doc.add_paragraph())
+                run = p.add_run(f"• {bullet}")
                 run.font.size = Pt(10.5)
-                bullet_para.paragraph_format.left_indent = Inches(0.25)
+                p.paragraph_format.left_indent = Inches(0.25)
+                insert_index += 1
 
             replaced = True
             break
 
     return doc
 
-# === Claude Resume Feedback ===
+# === Extract Resume Text ===
+def extract_text_from_docx(docx_file):
+    doc = Document(docx_file)
+    return "\n".join([p.text for p in doc.paragraphs if p.text.strip() != ""])
+
+# === Feedback via Claude ===
 def get_resume_feedback_from_claude(resume_text):
     system_prompt = "You're a career coach reviewing resumes for clarity, impact, and relevance."
     user_prompt = f"""Evaluate the following resume:
@@ -81,15 +100,10 @@ Return your response in a clear bullet list.
     )
     return response.content[0].text
 
-# === Extract Text from DOCX ===
-def extract_text_from_docx(docx_file):
-    doc = Document(docx_file)
-    return "\n".join([para.text for para in doc.paragraphs if para.text.strip() != ""])
-
 # === STREAMLIT UI ===
 st.set_page_config(page_title="Agentic Resume Assistant", layout="centered")
 st.title("🤖 Agentic AI Resume Assistant")
-st.markdown("Upload your resume, add a new project, and get professional feedback using GPT-4 and Claude 3.5.")
+st.markdown("Upload your resume, add a project, and get GPT & Claude feedback!")
 
 uploaded_file = st.file_uploader("📄 Upload your `.docx` resume", type=["docx"])
 
@@ -97,31 +111,32 @@ if uploaded_file:
     st.success("✅ Resume uploaded successfully!")
 
     st.subheader("🛠️ Add New Project")
-    subject = st.text_input("Subject Name")
-    description = st.text_area("Project Description")
-    github_url = st.text_input("GitHub Repository URL")
+    subject = st.text_input("Subject Name", placeholder="e.g., Business Analytics Toolbox")
+    description = st.text_area("Project Description", height=150)
+    github_url = st.text_input("GitHub Repository URL (optional)")
+    date_range = st.text_input("Project Date Range", value="Jan 2024 – May 2024")
 
     if st.button("✨ Generate Resume & Feedback"):
-        with st.spinner("🤖 Generating bullet points using GPT-4..."):
+        with st.spinner("Generating bullet points using GPT-4..."):
             bullet_points = generate_bullet_points(subject, description, github_url)
 
-        with st.spinner("📝 Updating resume..."):
+        with st.spinner("Updating resume with new project..."):
             doc = Document(uploaded_file)
-            updated_doc = replace_first_project_safely(doc, subject.upper(), bullet_points)
-            output_buffer = io.BytesIO()
-            updated_doc.save(output_buffer)
-            output_buffer.seek(0)
-            updated_text = extract_text_from_docx(output_buffer)
+            updated_doc = replace_first_project_safely(doc, subject.upper(), bullet_points, date_range)
+            buffer = io.BytesIO()
+            updated_doc.save(buffer)
+            buffer.seek(0)
+            resume_text = extract_text_from_docx(buffer)
 
-        with st.spinner("🔍 Getting feedback from Claude..."):
-            feedback = get_resume_feedback_from_claude(updated_text)
+        with st.spinner("Getting feedback from Claude..."):
+            feedback = get_resume_feedback_from_claude(resume_text)
 
         st.subheader("✅ Updated Resume Preview")
-        st.text_area("Updated Resume Text", updated_text, height=300)
+        st.text_area("Text Preview", resume_text, height=300)
 
         st.download_button(
             label="📥 Download Updated Resume",
-            data=output_buffer,
+            data=buffer,
             file_name="Updated_Resume.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
