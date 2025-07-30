@@ -9,7 +9,7 @@ import io
 client_openai = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 client_claude = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
-# === GPT Bullet Point Generator ===
+# === GPT-4 Bullet Point Generator ===
 def generate_bullet_points(subject, description, github_url):
     prompt = f"""You are a resume expert. Based on the project below, generate 2–3 strong, concise resume bullet points:
 
@@ -29,59 +29,58 @@ Format:
     )
     return response.choices[0].message.content.strip()
 
-# === Replace First Project (Colab-style Formatting) ===
-def replace_first_project_safely(doc, new_title, new_bullets, new_date="Jan 2024 – May 2024"):
+# === Replace Specific Project (by Index) ===
+def replace_project_by_index(doc, new_title, new_bullets, new_date, project_index=0):
     bullet_points = [bp.strip() for bp in new_bullets.strip().split("•") if bp.strip()]
     section_found = False
-    replaced = False
+    project_count = -1
 
     for i, para in enumerate(doc.paragraphs):
         if "PROJECT EXPERIENCE" in para.text.strip().upper():
             section_found = True
             continue
 
-        if section_found and para.text.strip().isupper() and not replaced:
-            # Find the range of the first project (title + bullets)
-            start = i
-            end = i + 1
-            while end < len(doc.paragraphs):
-                if doc.paragraphs[end].text.strip().isupper():
-                    break
-                end += 1
+        if section_found and para.text.strip().isupper():
+            project_count += 1
+            if project_count == project_index:
+                # Found target project to replace
+                start = i
+                end = i + 1
+                while end < len(doc.paragraphs):
+                    if doc.paragraphs[end].text.strip().isupper():
+                        break
+                    end += 1
 
-            # Clear old project block
-            for j in range(start, end):
-                doc.paragraphs[j].clear()
+                for j in range(start, end):
+                    doc.paragraphs[j].clear()
 
-            # Insert new project title + date
-            title_line = doc.paragraphs[start]
-            title_line.text = f"{new_title}        {new_date}"
-            run = title_line.runs[0]
-            run.font.bold = True
-            run.font.size = Pt(11)
-            title_line.paragraph_format.left_indent = Inches(0)
+                # Insert new title/date line
+                title_line = doc.paragraphs[start]
+                title_line.text = f"{new_title}        {new_date}"
+                run = title_line.runs[0]
+                run.font.bold = True
+                run.font.size = Pt(11)
 
-            # Insert bullet points
-            insert_index = start + 1
-            for bullet in bullet_points:
-                p = doc.add_paragraph()
-                run = p.add_run(f"• {bullet}")
-                run.font.size = Pt(10.5)
-                p.paragraph_format.left_indent = Inches(0.25)
-                doc.paragraphs.insert(insert_index, p)
-                insert_index += 1
+                # Insert bullets
+                insert_index = start + 1
+                for bullet in bullet_points:
+                    p = doc.add_paragraph()
+                    run = p.add_run(f"• {bullet}")
+                    run.font.size = Pt(10.5)
+                    p.paragraph_format.left_indent = Inches(0.25)
+                    doc.paragraphs.insert(insert_index, p)
+                    insert_index += 1
 
-            replaced = True
-            break
+                break
 
     return doc
 
-# === Extract Resume Text for Claude ===
+# === Extract Text from DOCX for Feedback ===
 def extract_text_from_docx(docx_file):
     doc = Document(docx_file)
     return "\n".join([p.text for p in doc.paragraphs if p.text.strip() != ""])
 
-# === Claude Resume Feedback ===
+# === Claude Feedback Generator ===
 def get_resume_feedback_from_claude(resume_text):
     system_prompt = "You're a career coach reviewing resumes for clarity, impact, and relevance."
     user_prompt = f"""Evaluate the following resume:
@@ -103,29 +102,36 @@ Return your response in a clear bullet list.
     )
     return response.content[0].text
 
-# === STREAMLIT APP ===
+# === STREAMLIT UI ===
 st.set_page_config(page_title="Agentic Resume Assistant", layout="centered")
 st.title("🤖 Agentic AI Resume Assistant")
-st.markdown("Upload your resume, replace the first project, and get GPT & Claude feedback.")
+st.markdown("Upload your resume, replace a project, and get GPT & Claude feedback.")
 
 uploaded_file = st.file_uploader("📄 Upload your `.docx` resume", type=["docx"])
 
 if uploaded_file:
     st.success("✅ Resume uploaded successfully!")
 
-    st.subheader("🛠️ Replace First Project")
+    st.subheader("🛠️ Replace a Project")
     subject = st.text_input("Project Title", placeholder="e.g., Business Analytics Toolbox")
     description = st.text_area("Project Description", height=150)
     github_url = st.text_input("GitHub Repository URL (optional)")
     date_range = st.text_input("Project Date Range", value="Jan 2024 – May 2024")
 
+    project_options = {
+        "Replace First Project": 0,
+        "Replace Second Project": 1
+    }
+    selected_option = st.selectbox("Choose which project to replace:", list(project_options.keys()))
+    project_index = project_options[selected_option]
+
     if st.button("✨ Update Resume & Get Feedback"):
         with st.spinner("Generating bullet points using GPT-4..."):
             bullet_points = generate_bullet_points(subject, description, github_url)
 
-        with st.spinner("Replacing the first project in your resume..."):
+        with st.spinner("Replacing the selected project in your resume..."):
             doc = Document(uploaded_file)
-            updated_doc = replace_first_project_safely(doc, subject.upper(), bullet_points, date_range)
+            updated_doc = replace_project_by_index(doc, subject.upper(), bullet_points, date_range, project_index)
             buffer = io.BytesIO()
             updated_doc.save(buffer)
             buffer.seek(0)
