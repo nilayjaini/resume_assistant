@@ -125,7 +125,7 @@ if uploaded_file:
     st.success("✅ Resume uploaded successfully!")
 
     st.subheader("🛠️ Replace First Project")
-    subject = st.text_input("Project Title", placeholder="e.g., Business Analytics Toolbox")
+    subject = st.text_input("Project Title", placeholder="Business Analytics Toolbox – Trends and Transitions in Men's College Basketball        Jan 2024 – May 2024")
     description = st.text_area("Project Description", height=150)
     github_url = st.text_input("GitHub Repository URL (optional)")
 
