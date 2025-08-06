@@ -107,7 +107,9 @@ def replace_first_project_safely(doc, new_title, new_bullets):
         paragraph.paragraph_format.left_indent = Inches(0.25)  # indent bullets
         paragraph.paragraph_format.first_line_indent = Inches(-0.15)  # hanging indent
         paragraph.paragraph_format.space_after = Pt(0)
-
+        paragraph.paragraph_format.space_before = Pt(0)
+        
+    new_bullets = [bp.strip() for bp in new_bullets if bp.strip()]
     section_found = False
     start_idx = -1
     end_idx = -1
