@@ -31,30 +31,88 @@ Format:
     return response.choices[0].message.content.strip().split("•")
 
 # === Your Exact Colab-Style Replacement Function ===
+# def replace_first_project_safely(doc, new_title, new_bullets):
+#     def delete_paragraph(paragraph):
+#         p = paragraph._element
+#         p.getparent().remove(p)
+#         p._p = p._element = None
+
+#     def format_bullet(paragraph, text):
+#         run = paragraph.add_run(f"• {text}")
+#         run.font.size = Pt(10.5)
+#         paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+#         paragraph.paragraph_format.left_indent = Inches(0.25)
+#         paragraph.paragraph_format.first_line_indent = Inches(-0.15)
+#         paragraph.paragraph_format.space_after = Pt(0)
+
+#     def format_title(paragraph, text):
+#         run = paragraph.add_run(text)
+#         run.bold = True
+#         run.font.size = Pt(12)
+#         paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+
+#     section_found = False
+#     start_idx = -1
+#     end_idx = -1
+
+#     for i, para in enumerate(doc.paragraphs):
+#         if "PROJECT EXPERIENCE" in para.text.upper():
+#             section_found = True
+#             continue
+#         if section_found and start_idx == -1 and para.text.strip():
+#             start_idx = i
+#             continue
+#         if section_found and start_idx != -1:
+#             if para.runs and para.runs[0].bold:
+#                 end_idx = i
+#                 break
+#     if end_idx == -1:
+#         for j in range(start_idx + 1, len(doc.paragraphs)):
+#             if doc.paragraphs[j].text.strip() == "":
+#                 end_idx = j
+#                 break
+#         else:
+#             end_idx = len(doc.paragraphs)
+
+#     for idx in reversed(range(start_idx, end_idx)):
+#         delete_paragraph(doc.paragraphs[idx])
+
+#     insert_idx = start_idx
+#     for bullet in reversed(new_bullets):
+#         bullet_para = doc.paragraphs[insert_idx].insert_paragraph_before("")
+#         format_bullet(bullet_para, bullet)
+
+#     title_para = doc.paragraphs[insert_idx].insert_paragraph_before("")
+#     format_title(title_para, new_title)
 def replace_first_project_safely(doc, new_title, new_bullets):
+    from docx.shared import Pt, Inches
+    from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+
     def delete_paragraph(paragraph):
         p = paragraph._element
         p.getparent().remove(p)
         p._p = p._element = None
-
-    def format_bullet(paragraph, text):
-        run = paragraph.add_run(f"• {text}")
-        run.font.size = Pt(10.5)
-        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-        paragraph.paragraph_format.left_indent = Inches(0.25)
-        paragraph.paragraph_format.first_line_indent = Inches(-0.15)
-        paragraph.paragraph_format.space_after = Pt(0)
 
     def format_title(paragraph, text):
         run = paragraph.add_run(text)
         run.bold = True
         run.font.size = Pt(12)
         paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+        paragraph.paragraph_format.space_after = Pt(0)
+
+    def format_bullet(paragraph, text):
+        run = paragraph.add_run(f"• {text}")
+        run.font.size = Pt(10.5)
+        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+        paragraph.paragraph_format.left_indent = Inches(0.25)  # indent bullets
+        paragraph.paragraph_format.first_line_indent = Inches(-0.15)  # hanging indent
+        paragraph.paragraph_format.space_after = Pt(0)
 
     section_found = False
     start_idx = -1
     end_idx = -1
 
+    # STEP 1: Find start and end of the first project under "PROJECT EXPERIENCE"
     for i, para in enumerate(doc.paragraphs):
         if "PROJECT EXPERIENCE" in para.text.upper():
             section_found = True
@@ -66,6 +124,7 @@ def replace_first_project_safely(doc, new_title, new_bullets):
             if para.runs and para.runs[0].bold:
                 end_idx = i
                 break
+
     if end_idx == -1:
         for j in range(start_idx + 1, len(doc.paragraphs)):
             if doc.paragraphs[j].text.strip() == "":
@@ -74,17 +133,19 @@ def replace_first_project_safely(doc, new_title, new_bullets):
         else:
             end_idx = len(doc.paragraphs)
 
+    # STEP 2: Delete old project content
     for idx in reversed(range(start_idx, end_idx)):
         delete_paragraph(doc.paragraphs[idx])
 
+    # STEP 3: Insert new bullets in reverse order
     insert_idx = start_idx
     for bullet in reversed(new_bullets):
         bullet_para = doc.paragraphs[insert_idx].insert_paragraph_before("")
         format_bullet(bullet_para, bullet)
 
+    # STEP 4: Insert title on top
     title_para = doc.paragraphs[insert_idx].insert_paragraph_before("")
     format_title(title_para, new_title)
-
     return doc
 
 # === Extract DOCX Text for Feedback ===
@@ -135,7 +196,7 @@ if uploaded_file:
 
         with st.spinner("Replacing the first project in your resume..."):
             doc = Document(uploaded_file)
-            updated_doc = replace_first_project_safely(doc, subject.upper(), bullet_points)
+            updated_doc = replace_first_project_safely(doc, subject, bullet_points)
             buffer = io.BytesIO()
             updated_doc.save(buffer)
             buffer.seek(0)
