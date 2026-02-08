@@ -169,7 +169,7 @@ Give me:
 Return your response in a clear bullet list.
 """
     response = client_claude.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-3-5-sonnet-latest",
         system=system_prompt,
         max_tokens=1000,
         temperature=0.4,
