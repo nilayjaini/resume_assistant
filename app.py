@@ -156,7 +156,7 @@ def extract_text_from_docx(docx_file):
     return "\n".join([p.text for p in doc.paragraphs if p.text.strip() != ""])
 
 # === Claude Feedback ===
-def get_resume_feedback_from_claude(resume_text):
+def get_resume_feedback_from_claude(resume_text: str) -> str:
     system_prompt = "You're a career coach reviewing resumes for clarity, impact, and relevance."
     user_prompt = f"""Evaluate the following resume:
 
@@ -168,14 +168,20 @@ Give me:
 3. Suggestions for tailoring to roles like: data analyst, product manager, ML engineer.
 Return your response in a clear bullet list.
 """
+
     response = client_claude.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        # ✅ Use a current Anthropic model ID
+        model="claude-sonnet-4-5",
         system=system_prompt,
         max_tokens=1000,
         temperature=0.4,
-        messages=[{"role": "user", "content": user_prompt}]
+        messages=[{"role": "user", "content": user_prompt}],
     )
-    return response.content[0].text
+
+    return "".join(
+        block.text for block in response.content
+        if getattr(block, "type", None) == "text"
+    ).strip()
 
 # === STREAMLIT UI ===
 st.set_page_config(page_title="Agentic Resume Assistant", layout="centered")
