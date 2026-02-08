@@ -33,16 +33,21 @@ client_claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 
 # =========================
+# Session State (persist results across reruns)
+# =========================
+for k in ["resume_text", "feedback", "updated_doc_bytes"]:
+    st.session_state.setdefault(k, None)
+
+def reset_outputs():
+    st.session_state["resume_text"] = None
+    st.session_state["feedback"] = None
+    st.session_state["updated_doc_bytes"] = None
+
+
+# =========================
 # Utility: Bullet cleanup
 # =========================
 def clean_bullets(text: str) -> list[str]:
-    """
-    Converts model output into a list of bullet strings (without leading bullet symbols).
-    Handles bullets like:
-      • foo
-      - foo
-      1. foo
-    """
     if not text:
         return []
 
@@ -50,19 +55,13 @@ def clean_bullets(text: str) -> list[str]:
     bullets: list[str] = []
 
     for ln in lines:
-        # strip common bullet markers
         ln2 = ln.lstrip("•").lstrip("-").strip()
-
-        # strip numbered bullets like "1. " or "2) "
         if len(ln2) >= 3 and ln2[0].isdigit() and ln2[1:3] in [". ", ") "]:
             ln2 = ln2[3:].strip()
-
         if ln2:
             bullets.append(ln2)
 
-    # keep 2–3 bullets
-    bullets = bullets[:3]
-    return bullets
+    return bullets[:3]
 
 
 # =========================
@@ -89,7 +88,6 @@ Return ONLY the bullet points, one per line, each starting with "• ".
     bullets = clean_bullets(raw)
 
     if len(bullets) < 2:
-        # basic fallback to avoid empty output
         bullets = [
             "Built an end-to-end project deliverable from requirements through validation, emphasizing clarity and measurable impact.",
             "Implemented reliable data processing and analysis workflow with clean documentation and reproducibility.",
@@ -99,7 +97,7 @@ Return ONLY the bullet points, one per line, each starting with "• ".
 
 
 # =========================
-# DOCX: Replace first project
+# DOCX: Replace first project under PROJECT EXPERIENCE
 # =========================
 def replace_first_project_safely(doc: Document, new_title: str, new_bullets: list[str]) -> Document:
     def delete_paragraph(paragraph):
@@ -130,18 +128,15 @@ def replace_first_project_safely(doc: Document, new_title: str, new_bullets: lis
     start_idx = -1
     end_idx = -1
 
-    # Find the "PROJECT EXPERIENCE" section
     for i, para in enumerate(doc.paragraphs):
         if "PROJECT EXPERIENCE" in para.text.upper():
             section_found = True
             continue
 
-        # first non-empty paragraph after header = start of first project block
         if section_found and start_idx == -1 and para.text.strip():
             start_idx = i
             continue
 
-        # end of first project block = next bold paragraph (often next project title)
         if section_found and start_idx != -1:
             if para.runs and para.runs[0].bold:
                 end_idx = i
@@ -150,10 +145,9 @@ def replace_first_project_safely(doc: Document, new_title: str, new_bullets: lis
     if not section_found:
         raise ValueError("Could not find 'PROJECT EXPERIENCE' section in the document.")
     if start_idx == -1:
-        raise ValueError("Found 'PROJECT EXPERIENCE' but couldn't locate first project entry below it.")
+        raise ValueError("Found 'PROJECT EXPERIENCE' but couldn't locate the first project entry below it.")
 
     if end_idx == -1:
-        # fallback: stop at first blank line, else end of doc
         for j in range(start_idx + 1, len(doc.paragraphs)):
             if doc.paragraphs[j].text.strip() == "":
                 end_idx = j
@@ -161,11 +155,9 @@ def replace_first_project_safely(doc: Document, new_title: str, new_bullets: lis
         else:
             end_idx = len(doc.paragraphs)
 
-    # Delete old content
     for idx in reversed(range(start_idx, end_idx)):
         delete_paragraph(doc.paragraphs[idx])
 
-    # Insert new content
     insert_idx = start_idx
 
     for bullet in reversed(new_bullets):
@@ -188,15 +180,9 @@ def extract_text_from_docx(docx_file) -> str:
 # =========================
 @st.cache_data(ttl=300)
 def list_anthropic_models() -> list[str]:
-    """
-    Lists models available to *this API key* using Anthropic Models API.
-    Docs: GET /v1/models and Python SDK client.models.list().
-    """
     try:
         page = client_claude.models.list(limit=100)
-        # page.data is a list of ModelInfo objects; id is the model identifier
-        ids = [m.id for m in page.data if getattr(m, "id", None)]
-        return ids
+        return [m.id for m in page.data if getattr(m, "id", None)]
     except Exception:
         return []
 
@@ -222,7 +208,6 @@ Return your response in a clear bullet list.
         messages=[{"role": "user", "content": user_prompt}],
     )
 
-    # robustly collect text blocks
     return "".join(
         block.text for block in resp.content
         if getattr(block, "type", None) == "text"
@@ -233,76 +218,89 @@ Return your response in a clear bullet list.
 # UI
 # =========================
 st.title("🤖 Agentic AI Resume Assistant")
-st.markdown("Upload your resume, replace the first project (clean formatting), and get OpenAI + Claude feedback.")
+st.markdown("Upload your resume, replace the first project, and get OpenAI + Claude feedback.")
 
-uploaded_file = st.file_uploader("📄 Upload your `.docx` resume", type=["docx"])
+uploaded_file = st.file_uploader("📄 Upload your `.docx` resume", type=["docx"], key="resume_uploader")
 
-if uploaded_file:
-    st.success("✅ Resume uploaded successfully!")
+# ✅ If user clicks X (clears uploader), reset and stop
+if uploaded_file is None:
+    reset_outputs()
+    st.info("Upload a resume to begin.")
+    st.stop()
 
-    st.subheader("🛠️ Replace First Project")
-    subject = st.text_input(
-        "Project Title",
-        placeholder="Business Analytics Toolbox – Trends and Transitions in Men's College Basketball | Jan 2024 – May 2024",
+st.success("✅ Resume uploaded successfully!")
+
+st.subheader("🛠️ Replace First Project")
+subject = st.text_input(
+    "Project Title",
+    placeholder="Business Analytics Toolbox – Trends and Transitions in Men's College Basketball | Jan 2024 – May 2024",
+)
+description = st.text_area("Project Description", height=150)
+github_url = st.text_input("GitHub Repository URL (optional)")
+
+st.subheader("🧠 Claude Model")
+available_models = list_anthropic_models()
+
+if available_models:
+    default_model = st.secrets.get("ANTHROPIC_MODEL", available_models[0])
+    if default_model not in available_models:
+        default_model = available_models[0]
+    claude_model = st.selectbox(
+        "Pick a Claude model (this list is what your API key can access):",
+        options=available_models,
+        index=available_models.index(default_model),
     )
-    description = st.text_area("Project Description", height=150)
-    github_url = st.text_input("GitHub Repository URL (optional)")
+else:
+    st.warning(
+        "Could not list Anthropic models for this key. "
+        "We will try a fallback model ID, but it may fail if your key lacks access."
+    )
+    claude_model = st.secrets.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
-    st.subheader("🧠 Claude Model")
-    available_models = list_anthropic_models()
+if st.button("✨ Update Resume & Get Feedback"):
+    if not subject.strip():
+        st.error("Please enter a Project Title.")
+        st.stop()
 
-    if available_models:
-        default_model = st.secrets.get("ANTHROPIC_MODEL", available_models[0])
-        if default_model not in available_models:
-            default_model = available_models[0]
-        claude_model = st.selectbox(
-            "Pick a Claude model (this list is what your API key can access):",
-            options=available_models,
-            index=available_models.index(default_model),
-        )
-    else:
-        st.warning(
-            "Could not list Anthropic models for this key. "
-            "Your key may be invalid, blocked, or network-restricted. "
-            "We will try a common fallback model ID."
-        )
-        claude_model = st.secrets.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+    with st.spinner("Generating bullet points using OpenAI..."):
+        bullet_points = generate_bullet_points(subject, description, github_url)
 
-    if st.button("✨ Update Resume & Get Feedback"):
-        if not subject.strip():
-            st.error("Please enter a Project Title.")
+    with st.spinner("Replacing the first project in your resume..."):
+        doc = Document(uploaded_file)
+        updated_doc = replace_first_project_safely(doc, subject, bullet_points)
+
+        buf = io.BytesIO()
+        updated_doc.save(buf)
+        updated_bytes = buf.getvalue()
+
+        resume_text = extract_text_from_docx(io.BytesIO(updated_bytes))
+
+    with st.spinner(f"Getting feedback from Claude ({claude_model})..."):
+        try:
+            feedback = get_resume_feedback_from_claude(resume_text, claude_model)
+        except anthropic.NotFoundError:
+            st.error(
+                f"Model '{claude_model}' is not available for your API key. "
+                "Pick a different model from the dropdown (if available), or check your Anthropic plan/access."
+            )
             st.stop()
 
-        with st.spinner("Generating bullet points using OpenAI..."):
-            bullet_points = generate_bullet_points(subject, description, github_url)
+    # ✅ Persist outputs so they do NOT disappear on download click (rerun)
+    st.session_state["updated_doc_bytes"] = updated_bytes
+    st.session_state["resume_text"] = resume_text
+    st.session_state["feedback"] = feedback
 
-        with st.spinner("Replacing the first project in your resume..."):
-            doc = Document(uploaded_file)
-            updated_doc = replace_first_project_safely(doc, subject, bullet_points)
-            buffer = io.BytesIO()
-            updated_doc.save(buffer)
-            buffer.seek(0)
-            resume_text = extract_text_from_docx(buffer)
+# ✅ STATIC RENDER (always show if present)
+if st.session_state["resume_text"]:
+    st.subheader("✅ Updated Resume Preview")
+    st.text_area("Resume Text", st.session_state["resume_text"], height=300)
 
-        with st.spinner(f"Getting feedback from Claude ({claude_model})..."):
-            try:
-                feedback = get_resume_feedback_from_claude(resume_text, claude_model)
-            except anthropic.NotFoundError:
-                st.error(
-                    f"Anthropic NotFoundError: model '{claude_model}' is not available for your API key. "
-                    "Pick a different model from the dropdown (if available), or check your Anthropic plan/access."
-                )
-                st.stop()
+    st.download_button(
+        label="📥 Download Updated Resume",
+        data=st.session_state["updated_doc_bytes"],
+        file_name="Updated_Resume.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
 
-        st.subheader("✅ Updated Resume Preview")
-        st.text_area("Resume Text", resume_text, height=300)
-
-        st.download_button(
-            label="📥 Download Updated Resume",
-            data=buffer.getvalue(),
-            file_name="Updated_Resume.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
-
-        st.subheader("💬 Claude's Feedback")
-        st.markdown(feedback)
+    st.subheader("💬 Claude's Feedback")
+    st.markdown(st.session_state["feedback"])
